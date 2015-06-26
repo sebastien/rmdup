@@ -1,0 +1,105 @@
+#!/usr/bin/env python
+# encoding=utf8 ---------------------------------------------------------------
+# Project           : rmdup
+# -----------------------------------------------------------------------------
+# Author            : Sébastien Pierre
+# License           : MIT
+# -----------------------------------------------------------------------------
+# Creation date     : 2015-06-26
+# Last modification : 2015-06-26
+# -----------------------------------------------------------------------------
+
+VERSION = "1.0.0"
+
+import os, sys, stat, hashlib, time
+
+try:
+	import reporter as logging
+except ImportError:
+	import logging
+
+KEEP_MTIME  = lambda a,b:cmp(os.stat(a)[stat.ST_MTIME], os.stat(b)[stat.ST_MTIME])
+KEEP_NAME   = lambda a,b:cmp(os.path.basename(a), os.path.basename(b))
+PICK_FIRST  = 0
+PICK_LAST   = -1
+
+class Duplicates(object):
+	"""Creates a catalogue of potential duplicates and allows to remove
+	the duplicates, keeping just one of them based on the `keep` and
+	`pick` arguments."""
+
+	def __init__( self, keep=KEEP_MTIME, pick=PICK_FIRST ):
+		self.sigs         = {}
+		self._clean       = os.unlink
+		self._keep        = KEEP_MTIME
+		self._pick        = PICK_FIRST
+		self._statRead    = 0
+		self._statStarted = 0
+		self._statEnded   = 0
+
+	def add( self, path, recursive=True ):
+		"""Adds the given path into the (potential) dublicates catalogue."""
+		if not path: return self
+		if self._statStarted == 0: self._statStarted = time.time()
+		if type(path) in (tuple,list):
+			for _ in path: self.add(_)
+		elif os.path.isdir(path):
+			logging.info("Indexing {0}".format(path))
+			for f in os.listdir(path):
+				self.add(os.path.join(path, f), recursive=False)
+		else:
+			with open(path, "rb") as f:
+				sig = hashlib.sha256(f.read()).hexdigest()
+				self.sigs.setdefault(sig, []).append(path)
+		return self
+
+	def run( self, args=None ):
+		"""Removes all the duplicates but the one picked."""
+		self.add(args)
+		dl = self.duplicates()
+		logging.info("{0} duplicates found".format(len(dl) or "No"))
+		for d in dl:
+			k = self.pick(d)
+			for p in d:
+				if p == k: continue
+				self.clean(p)
+		self._statEnded == time.time()
+		return self
+
+	def duplicates( self ):
+		"""Returns a list of duplicate paths."""
+		return [_ for _ in self.sigs.values() if len(_) > 1]
+
+	def pick( self, paths ):
+		"""Pick the one duplicate to keep from the given paths. Note that
+		this does not validates that the paths are indeed duplicates."""
+		assert len(paths) > 1, "Paths should have at least two elements"
+		return sorted(paths, self._keep)[self._pick]
+
+	def clean( self, path ):
+		"""Cleans the given path."""
+		logging.info("Removing {0}".format(path))
+		if type(self._clean) in (str, unicode):
+			os.system(self._clean + " " + path)
+		else:
+			self._clean(path)
+
+def run( args ):
+	"""Runs `rmdup` as a command."""
+	Duplicates().run(args)
+
+if __name__ == "__main__":
+	# SEE: https://github.com/jpillora/dedup -- too bad it's in go.
+	#  --keep, keep duplicates (by default, duplicates
+    #     are deleted)
+    #   -v, verbose logs (display each move and delete)
+    #   --version, display version
+    #   -h --help, this help text
+	if hasattr(logging, "install"):
+		logging.install()
+	else:
+		logging.basicConfig(stream=sys.stdout,level=logging.INFO,format="%(message)s")
+	run (sys.argv[1:])
+	pass
+
+# EOF - vim: ts=4 sw=4 noet syn=python
